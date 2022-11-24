@@ -18,11 +18,11 @@ use bitcoin::blockdata::script::Instruction;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::{sha256, sha512, Hmac, HmacEngine};
 use bitcoin::secp256k1::ecdh::SharedSecret;
-use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::{PublicKey, SecretKey, scalar};
 use bitcoin::util::base58;
 use bitcoin::util::bip32;
 use bitcoin::util::psbt;
-use bitcoin::{Address, Network, OutPoint, Script, Transaction, TxIn, Txid, network};
+use bitcoin::{Address, Network, OutPoint, Script, Transaction, TxIn, Txid};
 
 use crate::blockchain::BlockchainFactory;
 use crate::database::{BatchDatabase, MemoryDatabase};
@@ -34,6 +34,9 @@ use crate::wallet::tx_builder::{CreateTx, TxBuilder, TxOrdering};
 use crate::wallet::utils::SecpCtx;
 use crate::wallet::{AddressIndex, SyncOptions, Wallet};
 use crate::{Error as WalletError, KeychainKind, LocalUtxo, TransactionDetails};
+
+#[cfg(all(feature  = "global-context", feature = "rand-std"))]
+use crate::Scalar;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
 pub struct PaymentCode {
@@ -377,16 +380,15 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         let secp = self.main_wallet.secp_ctx();
         let network = self.main_wallet.network();
 
-        let mut pk = payment_code.derive(secp, 0);
-        let mut sk = self.secret(&vec![bip32::ChildNumber::Normal { index }]);
+        let pk = payment_code.derive(secp, 0);
+        let sk = self.secret(&vec![bip32::ChildNumber::Normal { index }]);
 
-        pk.mul_tweak(secp, sk.as_ref())?;
+        pk.mul_tweak(secp, &scalar::Scalar::from(sk))?;
         let shared_secret = sha256::Hash::hash(&pk.serialize()[1..]);
         if let Err(_) = SecretKey::from_slice(&shared_secret) {
             return Ok(None);
         }
-        sk.add_assign(&shared_secret)?;
-
+        //sk.add_tweak(&scalar::Scalar::from(<sha256::Hash as Into<SecretKey>>::into(shared_secret)))?;
         let wallet = Wallet::new(
             P2Pkh(bitcoin::PrivateKey {
                 inner: sk,
@@ -415,7 +417,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         let sk = self.secret(&vec![bip32::ChildNumber::Normal { index: 0 }]);
 
         let mut s = pk.clone();
-        s.mul_tweak(secp, sk.as_ref())?;
+        s.mul_tweak(secp, &scalar::Scalar::from(sk))?;
         let shared_secret = sha256::Hash::hash(&s.serialize()[1..]);
         let pk = match SecretKey::from_slice(&shared_secret) {
             Ok(sk) => pk.combine(&PublicKey::from_secret_key(secp, &sk))?,
