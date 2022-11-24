@@ -18,7 +18,8 @@ use bitcoin::blockdata::script::Instruction;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::{sha256, sha512, Hmac, HmacEngine};
 use bitcoin::secp256k1::ecdh::SharedSecret;
-use bitcoin::secp256k1::{PublicKey, SecretKey, scalar};
+use bitcoin::secp256k1::scalar::OutOfRangeError;
+use bitcoin::secp256k1::{PublicKey, SecretKey, scalar, Scalar};
 use bitcoin::util::base58;
 use bitcoin::util::bip32;
 use bitcoin::util::psbt;
@@ -388,7 +389,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         if let Err(_) = SecretKey::from_slice(&shared_secret) {
             return Ok(None);
         }
-        //sk.add_tweak(&scalar::Scalar::from(<sha256::Hash as Into<SecretKey>>::into(shared_secret)))?;
+        sk.add_tweak(&Scalar::from_be_bytes(shared_secret.into_inner())?)?;
         let wallet = Wallet::new(
             P2Pkh(bitcoin::PrivateKey {
                 inner: sk,
@@ -676,6 +677,7 @@ pub enum Error {
     SecpKey(bitcoin::secp256k1::Error),
     Key(crate::keys::KeyError),
     Wallet(WalletError),
+    OutOfRangeError(OutOfRangeError)
 }
 
 // TODO: impl display, std::err
@@ -700,7 +702,11 @@ impl From<WalletError> for Error {
         Error::Wallet(e)
     }
 }
-
+impl From<OutOfRangeError> for Error {
+    fn from(e: OutOfRangeError) -> Error {
+        Error::OutOfRangeError(e)
+    }
+}
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
